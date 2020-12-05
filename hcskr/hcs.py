@@ -9,6 +9,7 @@ from Crypto.PublicKey import RSA
 
 versioninfo = "1.6.1"
 
+
 def encrypt(n):
     pubkey = "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA81dCnCKt0NVH7j5Oh2+SGgEU0aqi5u6sYXemouJWXOlZO3jqDsHYM1qfEjVvCOmeoMNFXYSXdNhflU7mjWP8jWUmkYIQ8o3FGqMzsMTNxr+bAp0cULWu9eYmycjJwWIxxB7vUwvpEUNicgW7v5nCwmF5HS33Hmn7yDzcfjfBs99K5xJEppHG0qc+q3YXxxPpwZNIRFn0Wtxt0Muh1U8avvWyw03uQ/wMBnzhwUC8T4G5NclLEWzOQExbQ4oDlZBv8BM/WxxuOyu0I8bDUDdutJOfREYRZBlazFHvRKNNQQD2qDfjRz484uFs7b5nykjaMB9k/EJAuHjJzGs9MMMWtQIDAQAB=="
     rsa_public_key = b64decode(pubkey)
@@ -28,12 +29,12 @@ def encrypt(n):
 
 
 def selfcheck(name, birth, area, schoolname, level, customloginname=None, loop=asyncio.get_event_loop()):
-    return loop.run_until_complete(asyncSelfCheck(name, birth, area, schoolname, level,customloginname))
+    return loop.run_until_complete(asyncSelfCheck(name, birth, area, schoolname, level, customloginname))
 
 
 async def asyncSelfCheck(name, birth, area, schoolname, level, customloginname=None):
     if customloginname == None:
-        customloginname=name
+        customloginname = name
     else:
         pass
     name = encrypt(name)  # encrypt name
@@ -43,7 +44,6 @@ async def asyncSelfCheck(name, birth, area, schoolname, level, customloginname=N
     except:
         return {"error": True, "code": "FORMET", "message": "지역명이나 학교급을 잘못 입력하였습니다."}
     url = f"https://hcs.eduro.go.kr/v2/searchSchool?lctnScCode={info['schoolcode']}&schulCrseScCode={info['schoollevel']}&orgName={schoolname}&loginType=school"
-
 
     # open aiohttp.ClientSession
     async with aiohttp.ClientSession() as session:
@@ -69,7 +69,7 @@ async def asyncSelfCheck(name, birth, area, schoolname, level, customloginname=N
 
         # login with given school data
 
-        data = {"orgCode": schoolcode, "name": name, "birthday": birth,"loginType":"school","stdntPNo":None}
+        data = {"orgCode": schoolcode, "name": name, "birthday": birth, "loginType": "school", "stdntPNo": None}
         requrl = f"https://{info['schoolurl']}hcs.eduro.go.kr/v2/findUser"
 
         async with session.post(requrl, json=data) as response:
@@ -83,12 +83,45 @@ async def asyncSelfCheck(name, birth, area, schoolname, level, customloginname=N
                     "message": "학교는 검색하였으나, 입력한 정보의 학생을 찾을 수 없습니다.",
                 }
 
+        # get PNo
+
+        groupurl = f"https://{info['schoolurl']}hcs.eduro.go.kr/v2/selectUserGroup"
+        headers = {"Content-Type": "application/json", "Authorization": token}
+
+        async with session.post(groupurl, headers=headers) as response:
+            res = await response.json()
+            try:
+                pno = res[0]["userPNo"]
+            except:
+                return {
+                    "error": True,
+                    "code": "NOUSERINFO",
+                    "message": "학생은 찾았으나, 학생의 정보를 불러오는중 오류가 발생했습니다.",
+                }
+
+        # Get second token
+
+        infodata = {"orgCode": schoolcode, "userPNo": pno}
+        infourl = f"https://{info['schoolurl']}hcs.eduro.go.kr/v2/getUserInfo"
+
+        async with session.post(infourl, json=infodata, headers=headers) as response:
+            res = await response.json()
+            try:
+                token2 = res["token"]
+            except:
+                return {
+                    "error": True,
+                    "code": "NOUSERINFO",
+                    "message": "학생은 찾았으나, 학생의 정보를 불러오는중 오류가 발생했습니다.",
+                }
+
         # post diagnosis information
         endpoint = f"https://{info['schoolurl']}hcs.eduro.go.kr/registerServey"
-        headers = {"Content-Type": "application/json", "Authorization": token}
-        surveydata = {"rspns01":"1","rspns02":"1","rspns03":None,"rspns04":None,"rspns05":None,"rspns06":None,"rspns07":None,"rspns08":None,"rspns09":"0","rspns10":None,"rspns11":None,"rspns12":None,"rspns13":None,"rspns14":None,"rspns15":None,"rspns00":"Y","deviceUuid":"","upperToken":token,"upperUserNameEncpt":customloginname}
+        surveydata = {"rspns01": "1", "rspns02": "1", "rspns09": "0", "rspns00": "Y", "deviceUuid": "",
+                      "upperToken": token2, "upperUserNameEncpt": customloginname}
+        surveyheaders = {"Content-Type": "application/json", "Authorization": token2}
 
-        async with session.post(endpoint, json=surveydata, headers=headers) as response:
+        async with session.post(endpoint, json=surveydata, headers=surveyheaders) as response:
             res = await response.json()
             try:
                 return {
